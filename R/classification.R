@@ -1,0 +1,1478 @@
+#' ---
+#' author: Tony
+#' title: Classification Models For Predicting NBA Team Over Unders
+#' date: June 1, 2017
+#' ouptut:
+#'   html_document:
+#'     toc: true
+#'     toc_float: true
+#'     theme: united
+#'     highlight: textmate
+#' ---
+#+ global_options, include = FALSE, cache = FALSE
+knitr::opts_chunk$set(
+  # cache = TRUE,
+  fig.width = 11,
+  fig.height = 7,
+  fig.path = "figs/",
+  # tidy = TRUE,
+  # tidy.opts=list(width.cutoff = 80),
+  warning = FALSE,
+  message = FALSE
+)
+
+# rmarkdown::render("classification.R")
+# knitr::spin("classification.R", knit = FALSE)
+
+#'
+#'
+#' # Introduction
+#'
+#'
+#' ## Purpose
+#'
+#' This project involves my experimentation with various
+#' classification models for predicting whether or not an NBA team will go over
+#' or under the number of wins projected by sportsbooks.
+#' As those who are familiar with the NBA and sports betting may
+#' already know,
+#' correctly identifying the outcome of a team's season relative to the
+#' sportsbook's win total projection is a highly random task.
+#' To explain, the difficult in making predictions is due to a number of
+#' factors, including the unpredictability of roster composition
+#' as a result of
+#' in-season injuries to key players,
+#' roster changes, player cohesion, etc.
+#'
+#'
+#' ## Goals
+#'
+#' The best (professional) sports bettors might only correctly predict
+#' 18 (or 60%) of outcomes
+#' in a given season on a consistent basis
+#' (if they were to bet on all team outcomes),
+#' and public (less experienced) bettors are more than likely
+#' to hover around 50% in aggreggate.
+#' Hence, if I can successfully create a statistical model
+#' that can correctly predict outcomes
+#' consistently around 60%, I would consider that impressive.
+#' Additionally, I would prefer that the model is interpretable.
+#' (Consequently, models using techniques such as support vecotr
+#' machines (SVMs) might not be the best choice, but I'll look at
+#' them, nonetheless).
+#'
+#'
+#' ## Inspiration
+#'
+#' The inspiration for this project is multi-faceted:
+#'
+#'   * My brother and I record our picks for the over/unders
+#'   for each team win total at the
+#'   beginning of each NBA (and NFL) season and have wondered how well we might
+#'   do if we actaully gambled.
+#'   [^picks_footnote]
+#'
+#'   [^picks_footnote]:
+#'   My brother and I have been picking over/unders for NBA teams dating
+#'   back to 2012 and have always been fascinated with sports gambling (although
+#'   we have never actually participated ourselves).
+#'   I wanted to evaluate
+#'   our picks in some way, perhaps to create a model that could make
+#'   accurate win total picks for me. If I can create something good enough,
+#'   then maybe one day I will be confident enough to actually place a bet!
+#'
+#'   * I wanted a project to help me develop my R skills.
+#'   * I wanted to practice some of the statistical and machine learning
+#'   techniques that I have studied.
+#'
+#' Although we have only been recording my over/under picks
+#' since 2012, I will be looking at NBA seasons from 2007 to 2016 because
+#' I have sportsbook win total data going back to the 2007 season.
+#' [^confidence_ratings_footnote]
+#'
+#' [^confidence_ratings_footnote]:
+#' Notably, my brother and I also submitted "confidence ratings"
+#' gauging our level of confidence
+#' in our picks starting in 2014. (These ratings go from 1 to 30, where 1 is
+#' our most confident pick and 30 is our least.)
+#' Although I would like to use and/or evaluate our "personal" data (i.e. picks)
+#' to possibly create better models (perhaps by exposing our internal biases/
+#' tendencies and identifying where we might "fade" our initial picks), I won't
+#' be using this pick data in this part of the project. I'll leave that
+#' for another time. Accordingly, it is not problemmatic that I will be
+#' investigating years which we did not record picks
+#' (or submit confidence ratings).
+#'
+#' In this portion of the project, I'll evaulate different
+#' models while trying to be as consistent as possible in my choice of
+#' predictors and my implementation of training, testing and validating
+#' data sets. Nevertheless, due to the nature of each model,
+#' it can be difficult to be completely consistent.
+#'
+#' I only do some experimentation with choice of predictors and model
+#' formulations in this portion of the project; I'll leave more extensive
+#' analysis of model specifications for another time.
+#' My primary intent here is to implement different model families
+#' used for classification. Nevertheless, I'll use my
+#' best judgement and intuition in my selection of model parameters.
+#' [^tidyverse_footnote]
+#'
+#' [^tidyverse_footnote]:
+#' Finally, as a note to those who are interesting in code style, I attempt to
+#' implement the "tidy" workflow
+#' promoted by Hadley Wickham and many other prominent R community members.
+#' This approach advocates initial steps of
+#' importing and tidying data; followed by a cycle
+#' of transforming, modeling, and analyzing the data; and, finally,
+#' communicating the results.
+#'
+#' # Importing the Data
+#'
+#+ setup, include = FALSE
+if (substr(getwd(), 1, 1) == "C") {
+  setwd("C:/Users/aelhabr/Dropbox/data_science/projects/nba/tr")
+} else if (substr(getwd(), 1, 1) == "O") {
+  setwd("O:/_other/code/tony/nba/tr")
+}
+
+rm(list = ls())
+
+#'
+#' I start by loading in the data set for stats and team win totals. I
+#' have saved this data in local rds files for use across multiple projects.
+#' [^variable_naming_footnote]
+#'
+#' [^variable_naming_footnote]:
+#' One might notice a couple of things about my naming of variables:
+#'
+#'     * I generally use the prefix "d_" in order to distinguish data. This
+#'     is a personal convention that I picked up from traces of things in other
+#'     languages (variable naming with VBA and table naming with Oracle SQL).
+#'
+#'     * I may use the suffix "_raw" if the variable is going to be
+#'     manipulated/transformed in some way. Likewise, I may use a suffix like
+#'     "_all", "_select", etc. in order to indicate that one variable is a
+#'     larger grouping or subset of another similarly named variable.
+#'
+#'     * Sometimes, when I create a new variable that copies all or most of the
+#'     data from an existing variable, I append the new variable's name with
+#'     the suffix "_2", "_3", etc. I do this for one of two reason:
+#'
+#'       1. This might be done for ease in debugging/developing the code because
+#'          it helps me confirm that the changes that I intended to make actually
+#'          do take effect when re-running a certain chunk of code multiple times.
+#'          The variables that get created in this manner might be deemed
+#'          "temporary".
+#'          I realize that this is not exactly a "best practice", but it works
+#'          for me.
+#'
+#'       2. At other times, such as when I'm looking at different models that are
+#'          from the same family of models, then I'll use the suffix to simply
+#'          distinguish that the variable is similar to another variable (and has
+#'          the same dimenstions, etc.) but there is something intentionally
+#'          different about the way it has been defined.
+#'
+#'
+#+ import_data
+dir_data <- paste0(getwd(), "/data/")
+d_win_totals_raw <-
+  readRDS(paste0(dir_data, "d_win_totals.rds"))
+names(d_win_totals_raw)
+
+d_scraped_stats_classification_raw <-
+  readRDS(paste0(dir_data, "d_scraped_stats_classification_raw.rds"))
+names(d_scraped_stats_classification_raw)
+
+#'
+#' The values in the imported data sets should be fairly self-explanatory
+#' given the column names. Perhaps the only ambiguous ones are the `record_id`
+#' and `pick_id` fields in `d_win_totals_raw`. These are used for
+#' database purposes and are not significant for modeling.
+#'
+#'
+#' # Cleaning the Data
+#'
+#' Because I'm attempting to predict results for a given season, it would
+#' be incorrect to use team stats recorded during the season. Thus, I create
+#' lagged versions of the team stats.
+#'
+#+ d_scraped_stats_classification
+library(tidyverse)
+
+# Creating lagged versions of the team stats.
+d_scraped_stats_classification <- d_scraped_stats_classification_raw %>%
+  group_by(team) %>%
+  mutate(avg_scoring_margin_lag1 = lag(avg_scoring_margin),
+         win_pct_close_games_lag1 = lag(win_pct_close_games)) %>%
+  ungroup()
+
+# Selecting only the desired columns.
+# dplyr's select() function may conflict with other packages.
+d_scraped_stats_classification <- d_scraped_stats_classification %>%
+  dplyr::select(-avg_scoring_margin,
+                -avg_margin_thru_three_quarters,
+                -win_pct_close_games)
+
+#'
+#' As I did with the stats data, I create some new variables
+#' from the win totals data. These deserve some explanation.
+#'
+#' * I create a variable called `result` to distinguish
+#'   whether or not a team was over or under.
+#'   This will be the response variable for the models.
+#'   I use a binary 1 and 0 to indicate over and under respectively.
+#'   Alternatively, I could use "O" and "U" factors. However, because some
+#'   model functions either have trouble with factors or do not
+#'   coerce factors naturally, I'll stick with a binary categorical variable,
+#'   which can easily be translated to and from a numeric and a factor.
+#'
+#' * I create lagged variable for team wins and the  for the
+#'   same reason that I create lagged variables for the teams stats.
+#'
+#' * I create a variable called `w_diff2'
+#'   for the difference in team wins from the prior year
+#'   and the year before that. This variable might have some predictive
+#'   significance if it can be deduced (by the model)
+#'   that there is a discernable pattern
+#'   in the way sportsbooks respond to changes in a given team's wins from one
+#'   season to another. In order to make this kind of metric useful for
+#'   predictive purposes, it cannot simply use the difference in the number
+#'   of wins from the current season and the previous season; otherwise, this
+#'   variable would be highly correlated with the `result` variable and would
+#'   be identified as a "descriptive" variable.
+#'
+#' * I create a variable called `w_sportsbook_err1`
+#'   for the difference in the team's actual number of wins and the
+#'   sportsbook's win total from the previous year for similar reasons.
+#'   This variable could have some explanatory power if it can be deduced
+#'   (by the model) that sportsbooks are influenced by
+#'   their relative performance
+#'   for a given team in the previous year when determining
+#'   the win total for that team.
+#'   Notabley, this variable may be found to be
+#'   highly collinear with the `w_diff2` variable because they
+#'   portray the same kind of information.
+#'
+#' * I create variables `prob_implied_over` and `prob_implied_under`
+#'   for the probabilites of a team going over or under
+#'   its win total implied by the money lines for each outcome.
+#'   [^implied_probability_footnote]
+#'
+#'   [^implied_probability_footnote]:
+#'   See  [link](http://www.bettingexpert.com/how-to/convert-odds)
+#'   for an explanation of implied probability.
+#'
+#'   Then, because these variables are typically highly collinear, I combine
+#'   them into a singular variable called `prob_implied_combo`.
+#'   [^moneyline_footnote]
+#'
+#'   [^moneyline_footnote]:
+#'   If the money line for a given outcome
+#'   is higher than its typical value of -110 (which is
+#'   typically an indiciation that the public is heavily betting
+#'   that outcome), then the money line for the opposite outcome is
+#'   likely to be lower than the typical value of -110
+#'   (because sportsbooks are attempting to induce more even
+#'   action on the outcome).
+#'
+#' + I create a binary `underdog_combo` variable
+#'   to indicate whether or not the over/under money lines
+#'   (and their corresponding implied probabilities) indicate
+#'   that the team is an "underdog" to achieve the given outcome
+#'   (either over or under). This is implied by the money line
+#'   being less than the nominal value of -110.
+#'   As with the `w_diff2` and `w_sporstbook_err1` variables, it might
+#'   be found that this variable is highly collinear with the
+#'   `prob_implied_combo` variable because it essentially portrays the same
+#'   kind of information. Nevertheless, it might be useful as a
+#'   separate varaible because the granularity offered by the value
+#'   of the `prob_implied_combo` variable may or may not be useful.
+#'
+#+ d_win_totals
+# The inner_join might not work if the team columns is not of the same type
+# in each data set. (It must be either a character/factor in both data sets.)
+d_win_totals <- d_win_totals_raw %>%
+  # mutate(result = ifelse(w > w_sportsbook, "O", "U")) %>%
+  mutate(result = ifelse(w > w_sportsbook, 1, 0)) %>%
+  group_by(team) %>%
+  mutate(result_lag1 = lag(result),
+         w_lag1 = lag(w),
+         w_diff2 = (lag(w) - lag(w, 2)),
+         w_sportsbook_err1 = (lag(w) - lag(w_sportsbook))) %>%
+  ungroup() %>%
+  mutate(
+    prob_implied_over =
+      ifelse(
+        odds_over < 0,-odds_over / (-odds_over + 100),
+        ifelse(odds_over > 0, 100 / (odds_over + 100), 0)
+      ),
+    prob_implied_under =
+      ifelse(
+        odds_under < 0,-odds_under / (-odds_under + 100),
+        ifelse(odds_under > 0, 100 / (odds_under + 100), 0)
+      ),
+    prob_implied_combo = prob_implied_over - prob_implied_under,
+    underdog_combo = ifelse(odds_over < -110, 1, 0))
+
+# Could replace years with no odds with a constant values such as -110,
+# but choosing to exclude them instead.
+# d_win_totals$odds_over <-
+#   as.numeric(str_replace_all(d_win_totals$odds_over, "na", -110))
+# d_win_totals$odds_under <-
+#   as.numeric(str_replace_all(d_win_totals$odds_under, "na", -110))
+#'
+#' Finally, I join the stats and win totals data sets and reduce the
+#' combined data sets to only the predictor variables
+#' and the response variable `result` that will be used for modeling.
+#' The `yr_start` and `team` variables are only needed to perform the
+#' join and are not required for modeling.
+#' [^yr_start_footnote]
+#'
+#' [^yr_start_footnote]:
+#' Although the `yr_start` variable can (and will) be used
+#' for splitting the entire data set
+#' into training and testing sets, random sampling could be used if it
+#' were decided that `yr_start` should not be used whatsoever.
+#'
+#+ d_join_bookmark, include = FALSE
+# d_join ####
+#'
+#+ d_join
+cols_keep <- c("yr_start", "team",
+               "w_lag1", "w_diff2", "result_lag1", "w_sportsbook_err1",
+               "prob_implied_combo", "underdog_combo",
+               "avg_scoring_margin_lag1", "win_pct_close_games_lag1",
+               "result")
+
+d_join <- d_win_totals %>%
+  inner_join(d_scraped_stats_classification, by = c("yr_start", "team")) %>%
+  dplyr::select(one_of(cols_keep))
+
+#'
+#+ d_scraped_stats_raw, include = FALSE
+# d_scraped_stats_raw <-
+#   readRDS(paste0(dir_data, "d_scraped_stats_raw.rds"))
+# cols_join <- c("team", "yr_start")  # essential variables for joins
+# cols_stats <- c("off_efficiency", "def_efficiency")
+# d_scraped_stats <- d_scraped_stats_raw %>%
+#   dplyr::select(one_of(c(cols_join, cols_stats)))
+#'
+#' Next, I'll do a couple of things to clean up my data.
+#'
+#' * In order to make my joined data set more friendly for modeling,
+#'   I'm going to remove the rows that have NAs and make sure that there
+#'   are no duplicate rows.
+#'
+#' * Additionally, I choose not to normalize my data.
+#'   (I experimented with this and didn't find drastic differences
+#'   in the models I created.)
+#'   There is never really a right answer to whether or not normalizing
+#'   the data is the correct option. The choice can vary depending on the type
+#'   of model, the choice of predictors, the nature of the response variable,
+#'   etc.
+#'
+#' * I convert the response variable `result` to a factor because
+#'   the majority of model functions used for classification rely on the
+#'   response variable being distinguised as a factor.
+#'   [^d_model_footnote]
+#'
+#' [^d_model_footnote]:
+#' This may seem at odds
+#' with my previous choice to use 0 and 1 to represent under and over. However,
+#' the reality is that factors automatically get indexed beginning at 1
+#' (such that the next factor is labeled internally as 2), so,
+#' in my opintion, using
+#' "U" and "O" gives me less flexibility with converting to and from numerics
+#' because I would like to normally use the
+#' levels created by the factor coercion (i.e. "1" and "2"), but these are
+#' not ideal for me in this case. I prefer the labels "0" and "1", which are
+#' still coerced to "1" and "2" internally, but if I need to use numerics, then
+#' character labels such as "U" and "O" can be difficult to work with.
+#'
+#+ d_model_bookmark, include = FALSE
+# d_model ####
+#'
+#+ d_model
+d_model <- d_join %>%
+  dplyr::select(-team) %>%
+  filter(yr_start > 2008) %>%
+  distinct()
+
+d_model$result <- as.factor(d_model$result)
+
+# normalize <- function(col) (col - mean(col)) / sd(col)
+# d_model_norm <- d_model %>%
+#   mutate_at(vars(-yr_start, -result_lag1, -result), funs(normalize(.)))
+
+#+ save_data, include = FALSE
+saveRDS(d_join, file = paste0(dir_data, "d_join_classification", ".rds"))
+saveRDS(d_model, file = paste0(dir_data, "d_model_classification", ".rds"))
+#'
+#' Ok. It looks like my data is "tidied" enough to finally get to modeling.
+#'
+#'
+#' # Modeling the Data
+#'
+#' Now I'll begin creating models using different model frameworks.
+#'
+#'
+#' ## Logisitic Regression
+#'
+#+ lr_bookmark, include = FALSE
+# lr ####
+#'
+#' I'll start with a fairly well known family of models: logistic
+#' regression. Because logistic regression uses maximum likelihood estimate
+#' (MLE) to estimate parameters, as opposed ordinal least squares (OLS) like
+#' linear regression, most of the assumptions for linear regression models
+#' do not apply to logistic regression models. Nevertheless, logistic models
+#' should not have multicollinearity and and errors should not be correlated.
+#' [^lr_model_assumptions_footnote]
+#'
+#' [^lr_model_assumptions_footnote]:
+#' More specifially, the following assumptions for linear regression models
+#' are not applicable to logisitc models:
+#' 1. Statistical independence (i.e. lack of collinearity) among errors
+#' 2. HOmoscedasticity (constant variance) of errors
+#' 3. Normality of variables.
+#' 4. Normaility of errors.
+#'
+#'
+#' ### Variable Selection
+#'
+#' As I stated before, I'm going to be using the
+#' `result` variable as the response variable that I'll be trying to predict.
+#' But which predictors to choose? That choice depends on the type of model.
+#' Of course, there are many ways to investigate proper selection of models.
+#' Here, I'll only use methods related specifically to logistic regression.
+#' I'll leave other legitimate methods such as clustering, principal
+#' component analysis (PCA), support vector machine (SVM), etc. for other
+#' sections.
+#'
+#'
+#' #### Testing Multi-Collinearity
+#'
+#' In order to create robust models, it is best to reduce the
+#' set of predictors
+#' to only those which are most predictive and, consequently, most useful for
+#' models; otherwise, one may incidentally "overfit" a model and introduce
+#' high variance.
+#' One might say that
+#' Thus, it is often necessary (or, at the very least, highly
+#' recommended) to remove or transform variables exhibiting collinearity.
+#' (Another option  might be to modify the redundant variables in some way.)
+#'
+#' With this in mind, I'll start by looking at correlations
+#' between all possible predictor variables in my data.
+#' [^names_x_all_footnote]
+#'
+#' [^names_x_all_footnote]:
+#' This is one of the places where converting all variables to numerics
+#' (including the lagged version of `result` is useful because I can
+#' use the `cor` function from the `stats` package without encountering
+#' an error due to factors.)
+#'
+#+ d_cor_all
+names_x_all <-
+  c(
+    "w_lag1", "w_diff2", "result_lag1", "w_sportsbook_err1",
+    "prob_implied_combo", "underdog_combo",
+    "avg_scoring_margin_lag1", "win_pct_close_games_lag1"
+  )
+d_model_x <- d_model %>% dplyr::select(one_of(names_x_all))
+
+d_cor_all <- round(cor(d_model_x), 2)
+d_cor_all
+#'
+#' Furthermore, although it is only necessary that the residuals of the
+#' predictors
+#' have zero variance for linear regression models, it would be interesting
+#' to see if the residuals of the predictors in this data set
+#' exhibit non-zero variance.
+#'
+#+ correlations_plot
+# A visualization of variable relationships.
+# library(GGally)
+# ggpairs(d_model_x, lower = list(combo = wrap("facethist", binwidth = 30))
+#'
+#' It turns out that there is some strong collinearity between
+#' `result_lag1` and `w_sportsbook_err1`, as well as between
+#' `prob_implied_combo` and `underdog_combo`. As I noted before,
+#' this actually isn't all that unexpected since each pair of variables
+#' portrays similar information.
+#'
+#'
+#' #### P-Value Inference
+#'
+#' In addition to simply
+#' to reviewing co-variance values and vizualizing
+#' residuals among the possible predictors for
+#' determining the "optimal" set of predictors,
+#' I can take a more direct approach.
+#'  I can fit a logistic regression
+#' model on all possible predictors
+#' and see which variables have p-values indicating that they
+#' are statistically significant.
+#'
+#' At this point,
+#' I'll forego any kind of legitimate training and testing
+#' (which is necessary in order to avoid over-fitting and, consequently,
+#'  undestimating the test error of the model); instead,
+#'  I'll naively fit a model on the entire data set simply to get a
+#'  better understanding of variable significance.
+#'
+#+ lr_all_fit_full_bookmark, include = FALSE
+# lr_all_fit_full ####
+#'
+#+ lr_all_fit_full
+name_y <- "result"
+fmla_all <- paste(name_y, paste(names_x_all, collapse = " + "), sep = " ~ ")
+
+# glm() can work with either categorical or continuous response variable.
+# However, family = binomial must be specified for a
+# categorical response variable. Nevertheless, categorical variables may
+# be coded as numerics and glm() will still function properly
+# if family = binomial.
+# glmnet(x, y, family = "binomial") is an alternative.
+# Also, type = "response" should be specified in predict().
+# If not, then another type (e.g. logit) may be used.
+lr_all_fit_full <- glm(fmla_all, data = d_model, family = binomial)
+summary(lr_all_fit_full)$coef
+coef(lr_all_fit_full)
+#'
+#'
+#' Unfortunately, it doesn't look like any of the variables demonstrate
+#' statistically significant p-values (i.e. p < 0.05). Nevertheless, some
+#' of the variables that I intuitively believe can be shown to
+#' be the most significant (including `w_sportsbook_err1`
+#'  and `prob_implied_combo`)
+#' are shown to have some of the lowest p-values.
+#'
+#'
+#' #### Subsetting
+#'
+#' I can also use a "cost"-based method to refine a straightforward
+#' lositic regression model.
+#' Here I'll run a subsetting algorithm on all possible predictors
+#' and review its results. Because the number of predictors and observations
+#' is relatively small, I'll use a rigorous algorithm instead of a
+#' faster forward- or backward-step approach.
+#'
+#+ subset_fit_full
+library(leaps)
+name_y <- "result"
+
+# regsbusets() requires inputs to be matrices.
+d_x_all <- data.matrix(dplyr::select(d_model, one_of(names_x_all)))
+d_y <- data.matrix(dplyr::select(d_model, one_of(name_y)))
+
+# Set nvmax equal to the maximum allowable number of variables.
+subset_fit_full <- regsubsets(d_x_all, d_y, nvmax = length(names_x_all))
+
+#'
+#' There are several different criteria that could be used to choose model
+#' parameters. I'll look at Adjusted R^2, Cp, and BIC, which are each
+#' conveniently calculated by `regsubsets`. These values provide
+#' estimates of the test set error of the model.
+#'
+#+ subset_summary
+subset_summary <- summary(subset_fit_full)
+coef(subset_fit_full, which.max(subset_summary$adjr2))
+coef(subset_fit_full, which.min(subset_summary$cp))
+coef(subset_fit_full, which.min(subset_summary$bic))
+
+#+ subset_plots, include = FALSE
+# par(mfrow = c(3, 1))
+# plot(subset_summary$adjr2, xlab = "Number of Variables", ylab = "Adjusted RSq", type = "l")
+# points(which.max(subset_summary$adjr2), subset_summary$adjr2[which.max(subset_summary$adjr2)],
+#        col = "red", cex = 2, pch = 20)
+# plot(subset_summary$cp, xlab = "Number of Variables", ylab = "Cp", type = "l")
+# points(which.min(subset_summary$cp), subset_summary$cp[which.min(subset_summary$cp)],
+#        col = "red", cex = 2, pch = 20)
+# plot(subset_summary$bic, xlab = "Number of Variables", ylab = "BIC", type = "l")
+# points(which.min(subset_summary$bic), subset_summary$bic[which.min(subset_summary$bic)],
+#        col = "red", cex = 2, pch = 20)
+# par(mfrow = c(1, 1))
+# plot(subset_fit_full, scale = "adjr2")
+# plot(subset_fit_full, scale = "Cp")
+# plot(subset_fit_full, scale = "bic")
+#'
+#' It looks like these critiera each select a small number of parameters, and
+#' the parameters that they identify are inclusive with one another.
+#'
+#'
+#' #### Shrinking
+#'
+#' I could also look at the optimal model identified by shrinking methods
+#' such as ridge regression (RR) and the "lasso".
+#' However, I'll leave that for another time.
+#'
+#'
+#' #### Dimensionality Reduction
+#'
+#' Instead of trying to select the best subset of predictors for regression
+#' or applying some kind of cost parameter to a regression model
+#' incorporating all possible predictors, I could
+#' apply dimensionality reduction techniques to transform the
+#' original predictors to a linear combination of the original set.
+#' This should not be mistaken for feature selection.
+#' That is, there is no direct manner of translating the components
+#' to the original variables, so interpretability is lost with
+#' these kinds of techniques. Hence, because I seek a model with strong
+#' interpretability, I'll only briefly look at a single technique here.
+#'
+#'
+#' ##### Principal Components Regression (PCR)
+#'
+#' Principal Components Analysis (PCA) is one such dimensionality
+#' reduction technique.
+#' [^pcr_footnote]
+#'
+#' [^pcr_footnote]:
+#' See [link](https://www.r-bloggers.com/performing-principal-components-regression-pcr-in-r/)
+#' for more information.
+#'
+#' (Unsuprisingly, when applied to regression, PCA becomes
+#' known as principal components regression (PCR).)
+#'
+#+ pcr_all_fit_full
+library(pls)
+name_y <- "result"
+fmla_all <- paste(name_y, paste(names_x_all, collapse = " + "), sep = " ~ ")
+
+# pcr() does not allow response variable to be a factor.
+d_model_no_fctrs <- d_model
+d_model_no_fctrs$result <- as.numeric(d_model_no_fctrs$result)
+pcr_all_fit_full <- pcr(as.formula(fmla_all),
+                        ncomp = length(names_x_all),
+                        data = d_model_no_fctrs,
+                        validation = "CV")
+summary(pcr_all_fit_full)
+validationplot(pcr_all_fit_full, val.type = "RMSEP")
+
+#'
+#' It looks like not using all components gives a better CV performance,
+#' Also, it looks ike most of the variance is explained
+#' by a small subset of the components.
+#' (Although components aren't the same as the original predictors,
+#' one can reasonably infer that a low number of components
+#' corresponds to a low number of variables.)
+#' I'll ignore this for now and go ahead and use all predictors
+#' to make predictions and provide an estimate of the model's
+#' test error rate (or, conversely, its test accuracy rate).
+#'
+#+ pcr_all_pred_test
+pcr_all_prob_full <- predict(pcr_all_fit_full,
+                             type = "response",
+                             ncomp = length(names_x_all))
+pcr_all_pred_full <- rep(0, dim(d_model)[1])
+pcr_all_pred_full[pcr_all_prob_full > mean(pcr_all_prob_full)] = 1
+table(pcr_all_pred_full, d_model$result)
+round(mean(pcr_all_pred_full == d_model$result), 2)
+
+#'
+#' It looks like this method generated a relatively good test accuracy rate.
+#' However, let's not forget that this estimate of error is an underestimate
+#' because the model was trained and tested on the same data set.
+#' Thus, it is better to think of this test accuracy rate as the
+#' "theoretical" maximum test accuracy rate.
+#'
+#' Nonetheless, this was a good exercise in dimensionality reduction.
+#' For the time being, I'll skip consideration of
+#' partial least squares (PLS), which is another useful technique
+#' for dimensionality reduction.
+#'
+#' #### Selecting the Variables
+#'
+#' If I had to choose a "best" set of predictors given the information from
+#' this statistical approach combined with my own intuition, I would
+#' choose the `w_sportsbook_err1` and `prob_implied_combo` variables.
+#'
+#' These variables are indicated to be among the best for prediction
+#' purposes by my variable selection approaches.
+#' Why not the `result_lag1` and `underdog_combo` variables that portray
+#' similar information?
+#'  I favor the potential
+#' informational value added by the granularity
+#' provided by the continutous nature of `w_diff2` and `prob_implied_combo`
+#'  relative to their collinear
+#' categorical counterparts `result_lag1` are `underdog_combo`.
+#'
+#' Regarding my choice of two variables instead of one or three or more,
+#' I think using a single variable is a bit too simplistic.
+#' On the other hand, using
+#' three or more predictors might create introduce more uncertainty
+#' (in a given model) than desired.
+#'
+#' Now, because the previous outputs were fairly dense and may have
+#' been difficult to process, I'll review the co-variances
+#' and residuals among  only my choice of predictors in order to verify
+#' that they are independent of one another.
+#'
+#+ d_cor_select
+names_x_select <- c("w_sportsbook_err1", "prob_implied_combo")
+d_model_x_select <- d_model %>% dplyr::select(one_of(names_x_select))
+
+d_cor_select <- round(cor(d_model_x_select), 2)
+d_cor_select
+
+#+ d_cor_select_plot
+# library(GGally)
+# ggpairs(d_model_x_select, lower = list(combo = wrap("facethist", binwidth = 30)))
+#'
+#' Now I'll use my "select" predictors
+#' to fit a logistic regression model.
+#'
+#+ lr_select_fit_full_bookmark, include = FALSE
+# lr_select_fit_full ####
+
+#'
+#+ lr_select_fit_full
+fmla_select <- paste(name_y, paste(names_x_select, collapse = " + "), sep = " ~ ")
+lr_select_fit_full <- glm(fmla_select, data = d_model, family = binomial)
+summary(lr_select_fit_full)$coef
+coef(lr_select_fit_full)
+
+#+ lr_select_fit_full_glmnet, include = FALSE
+# library(glmnet)
+# lr_select_fit_full_2 <- glmnet(d_x_all, d_y, family = "binomial")
+# coef(lr_select_fit_full_2, s = 0.1)
+# plot(lr_select_fit_full_2)
+
+#'
+#' It looks like this model isn't all too bad.
+#' However, even after my process of trying to identify the best predictors
+#' to use heuristically, the p-values indicate that only one of the predictors
+#' is signficant. This actually might not be a flaw in my selection process.
+#' It could just be that there isn't a great combination of predictors out of
+#' those available. Anyways, I'll disregard further
+#' formula experimentation for now.
+#' 
+#'
+#' ### Estimating Test Error
+#' 
+#' If I had a large number of observations and some set
+#' of data that I could refer to as true "test" set, then implementing a
+#' train-validate-test 3-step approach would be the next step.
+#' However, I don't really have either, so
+#' the best that I can do is **estimate** the test set
+#' error of the model. I'll use several different approaches.
+#' 
+#' #### "High Variance" Estimation
+#'
+#' Now, I'll use `predict` to calculate the mean percentage error in the
+#' fitted values of this model. This is more like
+#' a theoretical limit that underestimates the true test error
+#' because the model is trained and tested on the entire data set. One
+#' might say that this is a "high variance" estimation since the model
+#' has been exposed to all observations and is more likely to be
+#' an improper fit if exposed to completely new observations.
+#' 
+#' #' [^train_test_footnote]
+#'
+#' [^train_test_footnote]:
+#' There is lots of discussion
+#' and debate regarding
+#' what constitutes train/validation/test sets and when to implement a 3-step
+#' train/validate/test approach or a 2-step train/test approach.
+#' As with variable selection, the
+#' correct approach for model tuning depends on a host of factors.
+#' Since I'm not explicity trying to refine
+#' some tuning parameter, I believe a simple 2-step train/test method is
+#' appropriate. Instead,
+#' 
+#' Traditionally, one might choose the value for the barrier
+#' between choosing between two categories for a categorical response
+#' variable to be the midpoint of the two values (i.e. in this case, 0.5).
+#' However, in this context, I think choosing 50% for each side is arguably
+#' more appropriate.
+#' [^mean_prob_footnote]
+#' 
+#' [^mean_prob_footnote]:
+#' Also, one might argue that using the mean probability
+#' reduces sensitivity to model parameters if the model predicts
+#' probabilities that are distributed heavily toward one response value.
+#'
+#+ lr_select_pred_full
+lr_select_prob_full <- predict(lr_select_fit_full, type = "response")
+lr_select_pred_full <- rep(0, dim(d_model)[1])
+# lr_select_pred_full[lr_select_prob_full > 0.5] = 1
+lr_select_pred_full[lr_select_prob_full > mean(lr_select_prob_full)] = 1
+table(lr_select_pred_full, d_model$result)
+round(mean(lr_select_pred_full == d_model$result), 2)
+#'
+#' So it isn't the worst model one could possibly come up with. At least it
+#' does better than 50% in predicting over/unders when
+#' trained and tested on the full data set. 
+#'
+#' How much worse (or better) does the prediction performance get when
+#' properly trained and tested on different sets?
+#'
+#' #### "Manual" Cross Validation (CV)
+#'
+#' Next, I'll still forego the creation of an explicit final "test" set, but
+#' now I'll split the data set into train and test sets. The "test" set
+#' in this case is not a pure test set since it is used as part of the model
+#' refinement process. One might interpret it to be a "validation" set.
+#'
+#' Splitting the data into train and test sets could be
+#' done in a number of ways, such as random sampling. However,
+#' I'm simply going to use a single year's worth of data
+#' as a test set and the rest as the train set. I'll do this for every year's
+#' worth of data in the whole data set.
+#' This is essentially k-fold cross validation (CV).
+#' More specifically, because there
+#' are eight years in this data set, this is 8-fold CV.
+#' 
+#+ lr_select_accuracy_pct
+yrs_cv <- 2009:2016
+lr_select_accuracy_pct <- list()
+for (i in 1:length(yrs_cv)) {
+  vector_train <- !(d_model$yr_start %in% yrs_cv[i])
+
+  d_model_test <- d_model[!vector_train,]
+  d_y_test <- d_model$result[!vector_train]
+  d_model_train <- d_model[vector_train,]
+  lr_select_fit_train <-
+    glm(fmla_select, data = d_model_train, family = binomial)
+  lr_select_prob_test <-
+    predict(lr_select_fit_train, d_model_test, type = "response")
+  lr_select_pred_test <- rep(0, dim(d_model_test)[1])
+  lr_select_pred_test[lr_select_prob_test > mean(lr_select_prob_test)] = 1
+  lr_select_accuracy_pct[i] <- mean(lr_select_pred_test == d_y_test)
+  lr_select_conf_matrix <- table(lr_select_pred_test, d_y_test)
+  if (i > 1) {
+    lr_select_conf_matrix_df <-
+      data.frame(
+        rbind(lr_select_conf_matrix_df,
+              cbind(
+                data.frame(yr_start = rep(yrs_cv[i],
+                                          length(lr_select_conf_matrix))),
+                lr_select_conf_matrix
+              )))
+  } else {
+    lr_select_conf_matrix_df <-
+      data.frame(
+        cbind(data.frame(yr_start = rep(yrs_cv[i], length(lr_select_conf_matrix)
+        )),
+        lr_select_conf_matrix))
+  }
+}
+
+#'
+#' I can look at the total accuracy percent aggregagated over
+#' each fold in this 8-fold CV, as well as the accuracy percent for
+#' each individual fold.
+#'
+#+ lr_select_accuracy_pct_mean
+
+round(mean(as.numeric(lr_select_accuracy_pct)), 2)
+round(as.numeric(lr_select_accuracy_pct), 2)
+
+#'
+#' I'll go ahead and save the confusion matrix for each fold
+#' in the manual CV to compare the results with those for other models.
+#'
+
+lr_select_conf_matrix_tbl <- lr_select_conf_matrix_df %>%
+  tbl_df() %>%
+  rename(pred_cv = lr_select_pred_test, count = Freq) %>%
+  mutate(model = "lr")
+# lr_select_conf_matrix_tbl
+#'
+#' #### "Automated" CV
+#' 
+#' As an alternative to this "manual" CV approach,
+#' I can use the `cv.glm` function in the `boot` package
+#' to perform cross validation. It performs k-fold cross validation with
+#' a default value of k = n, where n = # of observations. This is also known
+#' as leave-one-out-cross-validation (LOOCV).
+#'
+#+ lr_select_cv_loocv
+library(boot)
+# Setting the seed to create reproducible results.
+set.seed(42)
+lr_select_cv_loocv <- cv.glm(data = d_model, glmfit = lr_select_fit_full)
+round(1 - sqrt(lr_select_cv_loocv$delta[1]), 2)
+#'
+#' Now I'll do a k-fold cross-fold validation with k =- 10.
+#' 10-fold Cv is very common among many applications.
+#'
+#+ lr_select_cv_k10
+set.seed(42)
+lr_select_cv_k10 <- cv.glm(data = d_model, glmfit = lr_select_fit_full, K = 10)
+round(1 - sqrt(lr_select_cv_k10$delta[1]), 2)
+#'
+#' These estimates of test set error around 50% seem about right
+#' (unfortunately). The test accuracy rate generated by my manual
+#' k-fold cross-validation was a bit higher, but the results from the `cv.glm`
+#' calls indicate that it may underestimate the test error rate (although
+#' the error rates generated by the `cv.glm` calls are also estimates).
+#'
+#' Perhaps a logistic regression model isn't the best choice of model for
+#' this data set. Or, perhaps, a logistic regression model utilizing higher
+#' order terms and/or interaction terms would do better. However, I'll
+#' end the exploration of regression classification models here and move
+#' on to something different.
+#'
+#'
+#' ## Linear Discriminant Analysis (LDA)
+#'
+#+ lda_bookmark, include = FALSE
+# lda ####
+#'
+#' Now I'm going to try a linear discriminant analysis (LDA) model framework.
+#'
+#' ### Variable Selection
+#'
+#' As I did in the variable selection process for my logisitic regression model,
+#' I'll start by evaluating
+#' a model incorporating all predictors fit on the entire data set simply
+#' to help identify the most significant variables. Nevertheless, we
+#' should not forget that any predictions made by this model would
+#' provide an understimate of the true test error of the data.
+#'
+#+ lda_all_fit_full_bookmark, include = FALSE
+# lda_all_fit_full ####
+
+#'
+#+ lda_all_fit_full
+library(MASS)
+# Need as.formula() for lda() function.
+# Response variable may be either categorical or continutuous. Categorical
+# variable may be coded as numerics and lda() output will be the same
+# as if they were coded as factors.
+lda_all_fit_full <- lda(as.formula(fmla_all), data = d_model)
+lda_all_fit_full
+
+lda_all_pred_full <- predict(lda_all_fit_full, d_model)
+lda_all_conf_matrix <- table(lda_all_pred_full$class, d_model$result)
+lda_all_conf_matrix
+
+# The line below doesn't work.
+# mean((lda_all_pred_full$posterior == d_model$result), na.rm = TRUE)
+round(sum(sum(diag(lda_all_conf_matrix)) / sum(lda_all_conf_matrix)), 2)
+
+#'
+#' It appears that this model performs better than the logistic
+#' regression model including all possible predictors
+#' when trained and tested on the entire data set.
+#' However, its true robustness will be shown when
+#' it is trained and tested in
+#' a more proper manner. But should I use all the variables?
+#'
+#' The coefficients from the LDA model incorporating all possible predictor
+#' variables indicates that my select variables
+#' `w_sportsbook_err1` and `prob_implied_combo` prove to be two of the most
+#' significant variables. 
+#' 
+#' 
+#' ### Estimating Test Error
+#' 
+#' #### "High Variance" Estimation
+#' 
+#' Next, in order to facilitate a direct comparison
+#' with my refined logistic regression model, I'll fit and test a LDA model
+#' using the same variables.
+#'
+lda_select_fit_full <- lda(as.formula(fmla_select), data = d_model)
+lda_select_fit_full
+
+lda_select_pred_full <- predict(lda_select_fit_full, d_model)
+lda_select_conf_matrix <- table(lda_select_pred_full$class, d_model$result)
+lda_select_conf_matrix
+
+# The line below doesn't work.
+# mean((lda_select_pred_full$posterior == d_model$result), na.rm = TRUE)
+round(sum(sum(diag(lda_select_conf_matrix)) / sum(lda_select_conf_matrix)), 2)
+#'
+#' As I noted when I fit a logistic regression model on the entire data set,
+#' the test error estimate shown here is an understimate. Proper
+#' training and testing will provide a more accurate estimate.
+#'
+#' #### "Manual" CV
+#'
+#' I'll use the same manual CV method
+#' that I used with the logisitic regression model.
+#'
+#+ lda_select_accuracy_pct
+lda_select_accuracy_pct <- list()
+for (i in 1:length(yrs_cv)) {
+  vector_train <- !(d_model$yr_start %in% yrs_cv[i])
+  d_model_test <- d_model[!vector_train,]
+  d_y_test <- d_model$result[!vector_train]
+  lda_select_fit_train <-
+    lda(as.formula(fmla_select), data = d_model, subset = vector_train)
+  lda_select_pred_test <- predict(lda_select_fit_train, d_model_test)
+  lda_select_conf_matrix <- table(lda_select_pred_test$class, d_y_test)
+  lda_select_accuracy_pct[i] <-
+    (sum(diag(lda_select_conf_matrix)) / sum(lda_select_conf_matrix))
+  if (i > 1) {
+    lda_select_conf_matrix_df <-
+      data.frame(
+        rbind(lda_select_conf_matrix_df,
+              cbind(
+                data.frame(yr_start = rep(yrs_cv[i], length(lda_select_conf_matrix))),
+                lda_select_conf_matrix
+              )))
+  } else {
+    lda_select_conf_matrix_df <-
+      data.frame(
+        cbind(data.frame(yr_start = rep(yrs_cv[i], length(lda_select_conf_matrix)
+        )),
+    lda_select_conf_matrix))
+  }
+}
+
+lda_select_accuracy_pct <- unlist(lda_select_accuracy_pct)
+round(mean(as.numeric(lda_select_accuracy_pct), na.rm = TRUE), 2)
+round(as.numeric(lda_select_accuracy_pct), 2)
+lda_select_conf_matrix_tbl <- lda_select_conf_matrix_df %>%
+  tbl_df() %>%
+  rename(pred_cv = Var1, count = Freq) %>%
+  mutate(model = "lda")
+# lda_select_conf_matrix_tbl
+#'
+#' Not too bad ... Maybe this is an acceptable model.
+#'
+#' #### Extended Analysis
+#'
+#' Now, becuase this model seemed to perform relatively well when
+#' properly trained and tested,
+#' I want to take a closer look at the train/test output of this LDA
+#' model. I'll use the data from the 2016 season as a "pure" tet set
+#' and the data from the years prior to it as the train set.
+#' (In other words, I'm taking a closer look at the last iteration
+#' from the manual cross-validation method.)
+#'
+#+ lda_select_1yr_fit_train
+vector_train <- d_model$yr_start %in% yrs_cv[1:(length(yrs_cv) - 1)]
+vector_test <- d_model$yr_start %in% yrs_cv[length(yrs_cv)]
+# d_model_test <- d_model[!vector_train,]
+# d_y_test <- d_model$result[!vector_train]
+d_model_test <- d_model[vector_test,]
+d_y_test <- d_model$result[vector_test]
+lda_select_1yr_fit_train <- lda(as.formula(fmla_select), data = d_model, subset = vector_train)
+lda_select_1yr_fit_train
+
+#'
+#' Interestingly, it seems that this this model
+#' (incorporating only my chosen predictors)
+#' gives heavy weighting to the `prob_implied_combo`
+#' variable. The same is true of the LDA model incorporating all
+#' possible predictors (as well as the logisitc regression models).
+#'
+#+ lda_select_1yr_conf_matrix
+lda_select_1yr_pred_test <- predict(lda_select_1yr_fit_train, d_model_test)
+lda_select_1yr_conf_matrix <- table(lda_select_1yr_pred_test$class, d_y_test)
+lda_select_1yr_conf_matrix
+
+lda_select_1yr_pred_test$posterior[1:30, 1]
+sum(lda_select_1yr_pred_test$posterior[, 1] > 0.6)
+sum(lda_select_1yr_pred_test$posterior[, 1] < 0.4)
+#'
+#' This model generates some fairly exaggerated probabilities.
+#' A more conservative model might exhbit all posterior probabilities
+#' around 0.5.
+#'
+#' Which teams does this model project have the highest probability of
+#' outperforming/underperforming their expectations (as determined by the
+#' sportsbook win total)?
+#'
+#+ lda_select_1yr_pred_test_2
+# Need to re-introduce team data since it is not in d_model.
+# Team column was removed from d_join when creating d_model.
+g_teams <- d_win_totals_raw %>%
+  filter(yr_start == 2016) %>%
+  dplyr::select(team) %>%
+  distinct() %>%
+  arrange(sort(team)) %>%
+  unlist()
+
+max(lda_select_1yr_pred_test$posterior[, 1])
+# This assumes that the teams are listed in alphabetical order in d_model.
+# d_model_test$team[which.max(lda_select_1yr_pred_test$posterior[, 1])]
+g_teams[which.max(lda_select_1yr_pred_test$posterior[, 1])]
+
+min(lda_select_1yr_pred_test$posterior[, 1])
+g_teams[which.min(lda_select_1yr_pred_test$posterior[, 1])]
+#'
+#' One might say that the teams with the
+#' the lowest and highest posterior probabilites are the teams
+#' that the LDA model predicts have the greatest likelihood of going
+#' over and under respectively.
+#' [^lda_1yr_footnote]
+#'
+#' [^lda_1yr_footnote]:
+#' One might expect that bookies set the win total lower than
+#' it should be for bad teams in order to try to
+#' even out the money placed on each betting side. Thus, betting the
+#' over on bad teams is often perceived as a "sharp" and/or smart bet.
+#' In general, public bettors are more likely to make
+#' bets purely on perception, so they are more likely to believe a bad team
+#' will do very bad and a good team will do very good, and so they are more
+#' likely to bet the under on a bad team and the over on a good team.
+#' Although this deduction is fairly anecdotal,
+#' there is lots of research proving this statement.
+#' Thus, in order to even out the betting sides, bookies are
+#' more likely to exaggerate the win totals for the teams at the top and bottom
+#' of the league.
+#'
+#' I'll leave exploration of Quadratic Discriminant Analysis (QDA)
+#' models for another time. For now, I'll move on to a different family
+#' of models.
+#'
+#'
+#' ## Decision Tree
+#'
+#+ tree_bookmark, include = FALSE
+# tree ####
+#'
+#' Many people have heard of decision trees. They
+#' can be very useful for variable selection and can often
+#' produce simple, yet profound models.
+#'
+#' ### Variable Selection
+#'
+#' Speaking of variable selection, I'll do that now. I'll
+#' do as I have been doing and fit a model using all predictors on
+#' the entire data set.
+#'
+#+ tree_all_fit_full_bookmark, include = FALSE
+# tree_all_fit_full ####
+
+#+ tree_all_fit_full
+library(tree)
+set.seed(42)
+tree_all_fit_full <- tree(fmla_all, data = d_model)
+summary(tree_all_fit_full)
+# names(tree_all_fit_full)
+
+plot(tree_all_fit_full)
+text(tree_all_fit_full, pretty = 0)
+
+#'
+#' An extension of the tree family of models is the random forest.
+#' This kind of model can reduce the amount of variance associated with
+#' traditional decision trees. Bagging and boosting also can use
+#' tree as building blocks, but I'll stop short of looking at those
+#' models for the time being.
+#'
+#+ rf_all_fit_full
+library(randomForest)
+set.seed(42)
+rf_all_fit_full <-
+  randomForest(
+    as.formula(fmla_all),
+    mtry = length(names_x_all),
+    data = d_model,
+    importance = TRUE
+  )
+rf_all_fit_full
+# importance(rf_all_fit_full)
+varImpPlot(rf_all_fit_full)
+
+#'
+#' It looks like the random forest model identifies one of my select variables
+#' `prob_implied_combo` as having high importance. This was evident
+#' in the other types of models as well.
+#' 
+#' ### Estimating Test Error
+#' 
+#' 
+#' 
+#' #### "High Variance" Estimation
+#' 
+#'
+#' Now, I'll create a decision tree model using only the same
+#' select variables that I've been using. The random forest model affirmed
+#' that they are (somewhat) significant relative to the other variables.
+#'
+#' To emulate my "high variance" models used for estimating
+#' test error with the other model frameworks, I'll fit a tree model
+#' on the entire data set with just my select predictors.
+#' (As before, the estimate of test error rate for this model
+#' underestimates what the true test error rate would be if I had
+#' a distinct test set.)
+#'
+#+ tree_select_fit_full_bookmark, include = FALSE
+# tree_select_fit_full ####
+
+#+ tree_select_fit_full
+set.seed(42)
+tree_select_fit_full <- tree(fmla_select, data = d_model)
+summary(tree_select_fit_full)
+
+plot(tree_select_fit_full)
+text(tree_select_fit_full, pretty = 0)
+
+#'
+#+ tree_select_fit_full_rpart, include = FALSE
+library(rpart)
+set.seed(42)
+tree_select_fit_full_rpart <- rpart(fmla_select, data = d_model)
+summary(tree_select_fit_full_rpart)
+
+#'
+#' #### "Manual" Estimation
+#' 
+#'
+#' Next, I'll be consistent with what I've done before
+#' and implement a manual k-fold CV for my tree model.
+#'
+#+ tree_select_conf_matrix
+tree_select_accuracy_pct <- list()
+for (i in 1:length(yrs_cv)) {
+  vector_train_seq <- seq(1, dim(d_model)[1])
+  vector_train_seq <- vector_train_seq[-((((i - 1) * 30) + 1):(i * 30))]
+  d_model_test <- d_model[-vector_train_seq,]
+  d_y_test <- d_model$result[-vector_train_seq]
+  d_model_train <- d_model[vector_train_seq,]
+  tree_select_train <- tree(fmla_select, d_model_train)
+  tree_select_pred_test <- predict(tree_select_train, d_model_test, type = "class")
+  tree_select_conf_matrix <- table(tree_select_pred_test, d_y_test)
+  tree_select_accuracy_pct[i] <- mean(tree_select_pred_test == d_y_test)
+  if (i > 1) {
+    tree_select_conf_matrix_df <-
+      data.frame(
+        rbind(tree_select_conf_matrix_df,
+              cbind(
+                data.frame(yr_start = rep(yrs_cv[i],
+                                          length(tree_select_conf_matrix))),
+                tree_select_conf_matrix
+              )))
+  } else {
+    tree_select_conf_matrix_df <-
+      data.frame(
+        cbind(data.frame(yr_start = rep(yrs_cv[i], length(tree_select_conf_matrix)
+        )),
+        tree_select_conf_matrix))
+  }
+}
+
+round(mean(as.numeric(tree_select_accuracy_pct), na.rm = TRUE), 2)
+round(as.numeric(tree_select_accuracy_pct), 2)
+tree_select_conf_matrix_tbl <- tree_select_conf_matrix_df %>%
+  tbl_df() %>%
+  rename(pred_cv = tree_select_pred_test, count = Freq) %>%
+  mutate(model = "tree")
+# tree_select_conf_matrix_tbl
+
+#'
+#' Thus, I now have an manual 8-fold CV estimate of test error for a tree model.
+#' [tree_cv_footnote]
+#' 
+#' [tree_cv_footnote]:
+#' There is a `cv.tree` function that I could use,
+#' but I'm fine with just using the
+#' results of my manual CV for now since I have used this same method
+#' of validation for the other models. I woud like to be as consistent
+#' as possible so that I can make some comparisons across models.
+#'
+#'
+#' ## Support Vector Machine (SVM)
+#'
+#+ svm_bookmark, include = FALSE
+# svm ####
+
+#'
+#' Even though constructing a model that not only has low estimated test
+#' error is my primary goal, a model that is interpretable is also
+#' an important factor. Unfortunately, this is not one of the strengths
+#' of the next family of models that I'll look at:
+#' support vector machines (SVM). While SVMs can be very useful for
+#' predicting categorical response variables and have many applications,
+#' the results of a fitted SVM model can be difficult to interpret.
+#' In particular, it is not advisable to use SVMs for variable selection.
+#' Nonetheless, for the sake of experimentation, I'll see what I can do.
+#' 
+#'
+#' ### Variable Selection
+#'
+#' Similar to what I've done before, I'll start by fitting
+#' a model including all possible predictors.
+#' I need to specify a cost value, so I'll just pick a value for now.
+#'
+#+ svm_all_fit_full_no_tune_bookmark, include = FALSE
+# svm_all_fit_full_no_tune ####
+
+#'
+#+ svm_all_fit_full_no_tune
+library(e1071)
+
+# Predictors can't be factors.
+# Response variable must be numerics.
+# Need as.formula().
+# No default value for cost, so must specify one.
+svm_all_fit_full_no_tune <-
+  svm(
+    as.formula(fmla_all),
+    data = d_model,
+    kernel = "linear",
+    cost = 0.1
+  )
+svm_all_fit_full_no_tune
+
+# Which points are SVMs?
+# svm_all_fit_full_no_tune$index
+# plot() may not work since formula isn't explicit in svm() call.
+# plot(svm_all_fit_full_no_tune, d_model)
+#'
+#' That was easy enough, although I'm not sure how much I can infer
+#' from the results.
+#' 
+#' The `e1071` package has a `tune` function to perform k-fold cross validation
+#' (the default number of folds is 10.), which is useful for identifying
+#' good values for parameters such as `cost`. I used 0.1
+#' before. Let's see if that value is identified as a good value here.
+#'
+#+ svm_all_fit_full_no_tune
+set.seed(42)
+range_cost <- 10 ^ seq(-3, 2, 1)
+svm_all_fit_full_no_tune <-
+  tune(
+    svm,
+    as.formula(fmla_all),
+    data = d_model,
+    kernel = "linear",
+    ranges = list(cost = range_cost)
+  )
+svm_all_fit_full_no_tune
+
+#'
+#' It turns out that the best cost value from the several
+#' that I tried out is 0.1.
+#' 
+#' 
+#' ### Estimating Test Error
+#' 
+#' #### "High Variance" Estimation
+#'
+#' Now, to be consistent with some of the other model building that I've
+#' done, I'll fit a model only incorporating my select predictors.
+#' Even though it is difficult to judge the parameters of a fitted
+#' SVM model in isolation, at least I will be able to compare the test
+#' error estimate of an SVM model here with the error exhibited by
+#' other models using only the same predictors. I'm not sure that this
+#' exactly qualifies as one-to-one comparison, but I think it's a useful
+#' exercise.
+#' 
+#'
+#' First, I'll find the optimal cost value for a model
+#' using only my select variables with the `tune` function.
+#'
+#'
+#+ svm_select_fit_full_bookmark, include = FALSE
+# svm_select_fit_full ####
+#'
+#+ svm_select_fit_full
+set.seed(42)
+range_cost <- 10 ^ seq(-3, 2, 1)
+svm_select_fit_full <-
+  tune(
+    svm,
+    as.formula(fmla_select),
+    data = d_model,
+    kernel = "linear",
+    ranges = list(cost = range_cost)
+  )
+summary(svm_select_fit_full)
+svm_select_best <- svm_select_fit_full$best.model
+#'
+#'
+#' #### "Manual" CV
+#'
+#' Now, I'll perform manual k-fold cross validation as I've done before.
+#'
+#+ svm_select_accuracy_pct
+svm_select_accuracy_pct <- list()
+for (i in 1:length(yrs_cv)) {
+  vector_train <- !(d_model$yr_start %in% yrs_cv[i])
+  d_model_test <- d_model[!vector_train,]
+  d_y_test <- d_model$result[!vector_train]
+  svm_select_pred_test <- predict(svm_select_best, newdata = d_model_test)
+  svm_select_conf_matrix <- table(svm_select_pred_test, d_y_test)
+  svm_select_accuracy_pct[i] <- mean(svm_select_pred_test == d_y_test)
+  if (i > 1) {
+    svm_select_conf_matrix_df <-
+      data.frame(rbind(
+        svm_select_conf_matrix_df,
+        cbind(data.frame(yr_start = rep(
+          yrs_cv[i], length(svm_select_conf_matrix)
+        )),
+        svm_select_conf_matrix)
+      ))
+  } else {
+    svm_select_conf_matrix_df <-
+      data.frame(cbind(data.frame(yr_start = rep(
+        yrs_cv[i], length(svm_select_conf_matrix)
+      )),
+      svm_select_conf_matrix))
+  }
+}
+
+round(mean(as.numeric(svm_select_accuracy_pct), na.rm = TRUE), 2)
+round(as.numeric(svm_select_accuracy_pct), 2)
+svm_select_conf_matrix_tbl <- svm_select_conf_matrix_df %>%
+  tbl_df %>%
+  rename(pred_cv = svm_select_pred_test, count = Freq) %>%
+  mutate(model = "svm")
+# svm_select_conf_matrix_tbl
+#'
+#' It looks like this model is pretty good. However, that doesn't change
+#' the fact that it's difficult to interpret, so it might not be
+#' the best for my purposes.
+#'
+#' # Conclusion
+#'
+#' To recap, let's review the test accuracy percentage for each of 
+#' the "high variance" models.
+#' 
+#+ model_accuracy_pct_compare
+
+
+#' Furthermore, I'd like to compare the confusion matrices
+#' generated for the manual CV that I performed for all the models.
+#'
+#+ d_conf_matrix_compare, eval = FALSE
+d_conf_matrix_compare <-
+  bind_rows(
+    lr_select_conf_matrix_tbl,
+    lda_select_conf_matrix_tbl,
+    # tree_select_conf_matrix_tbl,
+    svm_select_conf_matrix_tbl
+  )
+
+d_conf_matrix_compare
+
+#'
+#' ## Work to Do
+#'
+#' I have a couple of ideas for what further exploration/experimentation could
+#' be done.
+#'
+#' * I would like to try to incporate more team statistical data, such as
+#'   offensive/defensive efficiency, etc. (Of course, I could only
+#'   use lagged versions of these statistics for use in predicting outcomes.)
+#'   Additionally, I think some other "non-traditional" statistical data
+#'   could be useful, including variables
+#'   indicating the change in team salary from one year to another,
+#'   the change in mean/medain team age, the amount of injury "luck" the
+#'   team had in the previous year, etc.
+#'
+#'   Nevertheless, even with more data and
+#'   better models, I think there is probably a feasible limit
+#'   on the accuracy
+#'   of projecting team win totals around 60%. Sports like basketball are just
+#'   too random to be able to predict extremely accurately.
+#'
+#' * I want to include my own pick data and see if I can
+#'   ascerntain any kind of patters in my picking behavior
+#'   or identify some kind of personal bias. This kind of information
+#'   could be used to help me either make better picks directly
+#'   or create a model that recognizes my tendencies and "fades" my
+#'   own picks in an optimal manner.
+#'
+#'  That's all the analysis that I'm going to do on this subject for now.
+#'
+#'
