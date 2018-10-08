@@ -124,12 +124,9 @@ $(document).ready(function () {
 <div id="introduction" class="section level1">
 <h1>Introduction</h1>
 <p>This project is no longer under development. See my more recent <code>nba</code> repo for my current efforts on this subject.</p>
-<p>This project (beginning around the time of my graduation from college in May 2016) was my first real dive into experimenting with machine learning models. I initiated this project as a means of re-inforcing the concept that I had learned in the <em>Introduction to Statistical Learning with R (ISLR)</em> book. After developing some scripts to scrape data from websites like (<a href="https://www.basketball-reference.com" class="uri">https://www.basketball-reference.com</a>), I tried out various classification and linear regression techniques to predict season win totals for NBA teams.</p>
+<p>This project (beginning around the time of my graduation from college in May 2016) was my first real dive into experimenting with machine learning models. I initiated this project as a means of re-inforcing the concept that I had learned in the <em>Introduction to Statistical Learning with R (ISLR)</em> book. The proejct itself explores the concept of improving NBA team win total predictions using team-level statistics, Las Vegas odds, etc. After developing some scripts to scrape data from websites like (<a href="https://www.basketball-reference.com" class="uri">https://www.basketball-reference.com</a>), I tried out various classification and linear regression techniques to make predictions.</p>
 <p>The primary deliverables of this projects are the <code>classification.R</code> and <code>linear_regression.R</code> scripts in the <code>R</code> folder. Both are formatted such that they can be converted directly to a .html or .pdf file (using the <code>rmarkdown::render()</code> function). This was done with <code>classification.R</code>. (See the <code>output</code> folder). On the other hand, the <code>linear_regression.R</code> script was never fully completed.</p>
-</div>
-<div id="summary" class="section level1">
-<h1>Summary</h1>
-<p>The</p>
+<p>While there was no real goal of discovering a method to improve NBA win total predictions, I found that no single classification method stood out as the best. In regards to predictors, it appears that the error in the Las Vegas total for the previous season and the implied odds (derived from the Las Vegas total) for a given season serve as the best predictors.</p>
 </div>
 <div id="highlights" class="section level1">
 <h1>Highlights</h1>
